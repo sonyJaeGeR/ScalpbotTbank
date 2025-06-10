@@ -1,0 +1,7 @@
+tinkoff-investments
+python-telegram-bot
+pandas
+pandas-ta
+python-dotenv
+asyncio
+schedule
