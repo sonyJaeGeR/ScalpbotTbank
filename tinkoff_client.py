@@ -4,8 +4,13 @@ from datetime import datetime, timedelta
 import logging
 
 from tinkoff.invest import (
-    AsyncClient, CandleInterval, OrderDirection, OrderType,
-    PostOrderRequest, StopOrderDirection, StopOrderType, PostStopOrderRequest
+    AsyncClient,
+    CandleInterval,
+    OrderDirection,
+    OrderType,
+    StopOrderDirection,
+    StopOrderExpirationType,
+    StopOrderType,
 )
 from tinkoff.invest.utils import now, quotation_to_decimal
 
