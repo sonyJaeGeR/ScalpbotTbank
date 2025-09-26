@@ -79,13 +79,17 @@ async def select_top_volatile_instruments(client: TinkoffClient):
             'low': float(c.low.units + c.low.nano / 1e9),
             'close': float(c.close.units + c.close.nano / 1e9),
         } for c in candles])
-        
+
         # Расчет ATR
-        atr = df.ta.atr(length=14).iloc[-1]
-        last_close = df['close'].iloc[-1]
-        
+         atr_series = ta.atr(df['high'], df['low'], df['close'], length=config.ATR_PERIOD)
+        if atr_series is None or atr_series.dropna().empty:
+            continue
+
+        atr = float(atr_series.dropna().iloc[-1])
+        last_close = float(df['close'].iloc[-1])
+
         # Нормализуем ATR в процентах от цены закрытия
-        if last_close > 0:
+        if last_close > 0 and atr > 0:
             normalized_atr = (atr / last_close) * 100
             volatility_data.append({'figi': share.figi, 'ticker': share.ticker, 'name': share.name, 'volatility': normalized_atr})
 
@@ -101,7 +105,7 @@ async def select_top_volatile_instruments(client: TinkoffClient):
     message = "✅ **Топ-10 волатильных инструментов на сегодня:**\n"
     for i, item in enumerate(top_instruments):
         message += f"{i+1}. {item['ticker']} ({item['name']}) - Волатильность: {item['volatility']:.2f}%\n"
-     if telegram_bot is not None:
+    if telegram_bot is not None:
         await telegram_bot.send_message(message)
     logging.info("Список волатильных инструментов обновлен.")
 
@@ -144,15 +148,16 @@ async def trading_cycle(client: TinkoffClient, risk_manager: RiskManager, strate
             'close': float(c.close.units + c.close.nano/1e9), 'volume': c.volume
         } for c in candles])
         candles_df.set_index('time', inplace=True)
-        
+        candles_df.sort_index(inplace=True)
+
         # Получаем сигнал от менеджера стратегий
         signal, reason = strategy_manager.get_signal(candles_df, float(last_price))
-        
+
         if signal != "HOLD":
             logging.info(f"Сигнал для {instrument['ticker']}: {signal}. Причина: {reason}")
             
             # Рассчитываем размер позиции
-            position_size_lots = await risk_manager.calculate_position_size(figi, float(last_price))
+            position_size_lots = await risk_manager.calculate_position_size(figi, float(last_price), candles_df)
             
             if position_size_lots > 0:
                 instrument_info = await client.get_instrument_info(figi)
@@ -170,7 +175,7 @@ async def trading_cycle(client: TinkoffClient, risk_manager: RiskManager, strate
                     risk_manager.record_trade(figi)
                     
                     # Расчет и установка SL/TP
-                    sl_price, tp_price = risk_manager.calculate_sl_tp(float(last_price), signal)
+                    sl_price, tp_price = risk_manager.calculate_sl_tp(float(last_price), signal, candles_df)
                     
                     sl_direction = StopOrderDirection.STOP_ORDER_DIRECTION_SELL if signal == "BUY" else StopOrderDirection.STOP_ORDER_DIRECTION_BUY
                     tp_direction = sl_direction
