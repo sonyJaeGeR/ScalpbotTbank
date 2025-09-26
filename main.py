@@ -21,6 +21,7 @@ trading_active = False
 top_instruments = []
 last_prices = {}
 daily_report = {"trades": 0, "profit": 0, "loss": 0}
+telegram_bot = None
 
 # --- Настройка логирования ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -56,11 +57,13 @@ async def select_top_volatile_instruments(client: TinkoffClient):
     """
     global top_instruments, telegram_bot
     logging.info("Начинаем выбор самых волатильных инструментов...")
-    await telegram_bot.send_message("🔍 Обновляю список волатильных инструментов...")
+    if telegram_bot is not None:
+        await telegram_bot.send_message("🔍 Обновляю список волатильных инструментов...")
     
     all_shares = await client.get_all_tradable_shares()
     if not all_shares:
-        await telegram_bot.send_message("⚠️ Не удалось получить список акций для анализа.")
+        if telegram_bot is not None:
+            await telegram_bot.send_message("⚠️ Не удалось получить список акций для анализа.")
         return
 
     volatility_data = []
@@ -87,7 +90,8 @@ async def select_top_volatile_instruments(client: TinkoffClient):
             volatility_data.append({'figi': share.figi, 'ticker': share.ticker, 'name': share.name, 'volatility': normalized_atr})
 
     if not volatility_data:
-        await telegram_bot.send_message("⚠️ Не удалось рассчитать волатильность ни для одного инструмента.")
+        if telegram_bot is not None:
+            await telegram_bot.send_message("⚠️ Не удалось рассчитать волатильность ни для одного инструмента.")
         return
 
     # Сортируем по убыванию волатильности и берем топ-N
@@ -97,7 +101,8 @@ async def select_top_volatile_instruments(client: TinkoffClient):
     message = "✅ **Топ-10 волатильных инструментов на сегодня:**\n"
     for i, item in enumerate(top_instruments):
         message += f"{i+1}. {item['ticker']} ({item['name']}) - Волатильность: {item['volatility']:.2f}%\n"
-    await telegram_bot.send_message(message)
+     if telegram_bot is not None:
+        await telegram_bot.send_message(message)
     logging.info("Список волатильных инструментов обновлен.")
 
 async def trading_cycle(client: TinkoffClient, risk_manager: RiskManager, strategy_manager: StrategyManager):
@@ -151,11 +156,15 @@ async def trading_cycle(client: TinkoffClient, risk_manager: RiskManager, strate
             
             if position_size_lots > 0:
                 instrument_info = await client.get_instrument_info(figi)
-                quantity = position_size_lots * instrument_info['lot']
+                if instrument_info is None:
+                    continue
+
+                quantity_lots = position_size_lots
+                quantity_shares = position_size_lots * instrument_info['lot']
                 direction = OrderDirection.ORDER_DIRECTION_BUY if signal == "BUY" else OrderDirection.ORDER_DIRECTION_SELL
                 
                 # Отправляем рыночный ордер
-                order = await client.post_market_order(figi, position_size_lots, direction)
+                order = await client.post_market_order(figi, quantity_lots, direction)
                 
                 if order:
                     risk_manager.record_trade(figi)
@@ -168,14 +177,14 @@ async def trading_cycle(client: TinkoffClient, risk_manager: RiskManager, strate
                     
                     await client.post_stop_order(
                         figi,
-                        quantity,
+                        quantity_lots,
                         sl_price,
                         sl_direction,
                         StopOrderType.STOP_ORDER_TYPE_STOP_LOSS,
                     )
                     await client.post_stop_order(
                         figi,
-                        quantity,
+                        quantity_lots,
                         tp_price,
                         tp_direction,
                         StopOrderType.STOP_ORDER_TYPE_TAKE_PROFIT,
@@ -187,7 +196,7 @@ async def trading_cycle(client: TinkoffClient, risk_manager: RiskManager, strate
                         f"Инструмент: {instrument['ticker']} ({instrument['name']})\n"
                         f"Направление: {'ПОКУПКА' if signal == 'BUY' else 'ПРОДАЖА'}\n"
                         f"Цена входа: {last_price:.4f} RUB\n"
-                        f"Объем: {quantity} шт. ({position_size_lots} лотов)\n"
+                        f"Объем: {quantity_shares} шт. ({quantity_lots} лотов)\n"
                         f"Stop Loss: {sl_price:.4f}\n"
                         f"Take Profit: {tp_price:.4f}\n\n"
                         f"<i>Причина: {reason}</i>"
@@ -226,9 +235,11 @@ async def main():
         risk_manager.reset_daily_counts()
         
         # Настройка ежедневного обновления инструментов и сброса счетчиков
-        schedule.every().day.at("09:00").do(
-            lambda: asyncio.run(select_top_volatile_instruments(client))
-        )
+        def schedule_select_top_instruments():
+            loop = asyncio.get_running_loop()
+            loop.create_task(select_top_volatile_instruments(client))
+
+        schedule.every().day.at("09:00").do(schedule_select_top_instruments)
         schedule.every().day.at("00:01").do(risk_manager.reset_daily_counts)
         
         # Основной цикл работы
