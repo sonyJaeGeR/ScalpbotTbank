@@ -6,6 +6,7 @@ import logging
 from tinkoff.invest import (
     AsyncClient,
     CandleInterval,
+    InstrumentIdType,
     OrderDirection,
     OrderType,
     StopOrderDirection,
@@ -98,7 +99,10 @@ class TinkoffClient:
             return self.instrument_info_cache[figi]
         
         try:
-            response = await self.client.instruments.get_instrument_by(id_type=1, id=figi) # 1 = FIGI
+            response = await self.client.instruments.get_instrument_by(
+                id_type=InstrumentIdType.INSTRUMENT_ID_TYPE_FIGI,
+                id=figi,
+            )
             instrument = response.instrument
             info = {
                 'lot': instrument.lot,
@@ -180,7 +184,7 @@ class TinkoffClient:
             price_quotation = decimal_to_quotation(stop_price)
             
             if self.use_sandbox:
-                 response = await self.client.sandbox.post_sandbox_stop_order(
+                response = await self.client.sandbox.post_sandbox_stop_order(
                     account_id=config.TINKOFF_ACCOUNT_ID,
                     figi=figi,
                     quantity=quantity,
@@ -191,7 +195,7 @@ class TinkoffClient:
                     expiration_type=StopOrderExpirationType.STOP_ORDER_EXPIRATION_TYPE_GTC,
                 )
             else:
-                 response = await self.client.stop_orders.post_stop_order(
+                response = await self.client.stop_orders.post_stop_order(
                     account_id=config.TINKOFF_ACCOUNT_ID,
                     figi=figi,
                     quantity=quantity,
