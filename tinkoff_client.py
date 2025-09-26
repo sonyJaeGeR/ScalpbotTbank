@@ -4,8 +4,13 @@ from datetime import datetime, timedelta
 import logging
 
 from tinkoff.invest import (
-    AsyncClient, CandleInterval, OrderDirection, OrderType,
-    PostOrderRequest, StopOrderDirection, StopOrderType, PostStopOrderRequest
+    AsyncClient,
+    CandleInterval,
+    OrderDirection,
+    OrderType,
+    StopOrderDirection,
+    StopOrderExpirationType,
+    StopOrderType,
 )
 from tinkoff.invest.utils import now, quotation_to_decimal
 
@@ -126,56 +131,79 @@ class TinkoffClient:
     async def post_market_order(self, figi: str, quantity: int, direction: OrderDirection):
         """Размещает рыночную заявку."""
         try:
-            request = PostOrderRequest(
-                figi=figi,
-                quantity=quantity,
-                direction=direction,
-                order_type=OrderType.ORDER_TYPE_MARKET,
-                order_id=str(datetime.utcnow().timestamp()) # Уникальный ID заявки
-            )
+            order_id = str(datetime.utcnow().timestamp())  # Уникальный ID заявки
             if self.use_sandbox:
                 response = await self.client.sandbox.post_sandbox_order(
-                    account_id=config.TINKOFF_ACCOUNT_ID, **request.__dict__
+                    account_id=config.TINKOFF_ACCOUNT_ID,
+                    figi=figi,
+                    quantity=quantity,
+                    direction=direction,
+                    order_type=OrderType.ORDER_TYPE_MARKET,
+                    order_id=order_id,
                 )
             else:
                 response = await self.client.orders.post_order(
-                    account_id=config.TINKOFF_ACCOUNT_ID, **request.__dict__
+                    account_id=config.TINKOFF_ACCOUNT_ID,
+                    figi=figi,
+                    quantity=quantity,
+                    direction=direction,
+                    order_type=OrderType.ORDER_TYPE_MARKET,
+                    order_id=order_id,
                 )
             logging.info(f"Размещена рыночная заявка: {response}")
             return response
         except Exception as e:
             logging.error(f"Ошибка при размещении рыночной заявки для {figi}: {e}")
             return None
-            
-    async def post_stop_order(self, figi: str, quantity: int, stop_price: float, direction: StopOrderDirection):
+
+    async def post_stop_order(
+        self,
+        figi: str,
+        quantity: int,
+        stop_price: float,
+        direction: StopOrderDirection,
+        stop_order_type: StopOrderType,
+    ):
         """Размещает стоп-заявку (Stop-Loss или Take-Profit)."""
         try:
             from tinkoff.invest.utils import decimal_to_quotation
-            
+
             price_increment_info = await self.get_instrument_info(figi)
+            if not price_increment_info:
+                return None
+
             min_price_increment = price_increment_info['min_price_increment']
-            
+            if not min_price_increment:
+                logging.error(f"Не удалось определить шаг цены для {figi}")
+                return None
+
             # Округляем цену до шага цены инструмента
             stop_price = round(stop_price / float(min_price_increment)) * float(min_price_increment)
-            
-            request = PostStopOrderRequest(
-                figi=figi,
-                quantity=quantity,
-                price=decimal_to_quotation(stop_price),  # Цена исполнения для Take Profit
-                stop_price=decimal_to_quotation(stop_price), # Цена активации для Stop Loss
-                direction=direction,
-                stop_order_type=StopOrderType.STOP_ORDER_TYPE_TAKE_PROFIT if direction == StopOrderDirection.STOP_ORDER_DIRECTION_SELL else StopOrderType.STOP_ORDER_TYPE_STOP_LOSS,
-            )
-            
+
+            price_quotation = decimal_to_quotation(stop_price)
             if self.use_sandbox:
-                 response = await self.client.sandbox.post_sandbox_stop_order(
-                    account_id=config.TINKOFF_ACCOUNT_ID, **request.__dict__
-                 )
+                response = await self.client.sandbox.post_sandbox_stop_order(
+                    account_id=config.TINKOFF_ACCOUNT_ID,
+                    figi=figi,
+                    quantity=quantity,
+                    price=price_quotation,
+                    stop_price=price_quotation,
+                    direction=direction,
+                    stop_order_type=stop_order_type,
+                    expiration_type=StopOrderExpirationType.STOP_ORDER_EXPIRATION_TYPE_GTC,
+                )
             else:
-                 response = await self.client.stop_orders.post_stop_order(
-                    account_id=config.TINKOFF_ACCOUNT_ID, **request.__dict__
-                 )
-            
+                response = await self.client.stop_orders.post_stop_order(
+                    account_id=config.TINKOFF_ACCOUNT_ID,
+                    figi=figi,
+                    quantity=quantity,
+                    price=price_quotation,
+                    stop_price=price_quotation,
+                    direction=direction,
+                    stop_order_type=stop_order_type,
+                    expiration_type=StopOrderExpirationType.STOP_ORDER_EXPIRATION_TYPE_GTC,
+                )
+
             logging.info(f"Размещена стоп-заявка: {response}")
             return response
         except Exception as e:

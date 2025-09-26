@@ -8,7 +8,7 @@ from datetime import datetime
 import pandas as pd
 import pandas_ta as ta
 import schedule
-from tinkoff.invest import CandleInterval, OrderDirection, StopOrderDirection
+from tinkoff.invest import CandleInterval, OrderDirection, StopOrderDirection, StopOrderType
 
 import config
 from risk_manager import RiskManager
@@ -166,8 +166,20 @@ async def trading_cycle(client: TinkoffClient, risk_manager: RiskManager, strate
                     sl_direction = StopOrderDirection.STOP_ORDER_DIRECTION_SELL if signal == "BUY" else StopOrderDirection.STOP_ORDER_DIRECTION_BUY
                     tp_direction = sl_direction
                     
-                    await client.post_stop_order(figi, quantity, sl_price, sl_direction)
-                    await client.post_stop_order(figi, quantity, tp_price, tp_direction)
+                    await client.post_stop_order(
+                        figi,
+                        quantity,
+                        sl_price,
+                        sl_direction,
+                        StopOrderType.STOP_ORDER_TYPE_STOP_LOSS,
+                    )
+                    await client.post_stop_order(
+                        figi,
+                        quantity,
+                        tp_price,
+                        tp_direction,
+                        StopOrderType.STOP_ORDER_TYPE_TAKE_PROFIT,
+                    )
                     
                     # Уведомление в Telegram
                     trade_message = (
